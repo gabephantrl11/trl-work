@@ -1,0 +1,7 @@
+{
+    "files.watcherExclude": {
+        "**": true
+    },
+    "search.followSymlinks": false,
+    "files.enableTrash": false
+}

@@ -1,0 +1,5 @@
+alias cdw='cd ${WORKSPACE_DIR}'
+alias clauded='claude --dangerously-skip-permissions'
+alias ipa='ip -c -4 -brief address show'
+alias ports='sudo ss -tulnp'
+alias py='python3'
