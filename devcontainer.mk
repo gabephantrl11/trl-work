@@ -82,8 +82,7 @@ devcontainer-stop:
 		echo "No running devcontainer found"; \
 	fi
 
-## Start devcontainer in terminal
-dev:
+dev: ## Start devcontainer in terminal
 	@if [ "$(TRL11_DEV_CONTAINER)" = "true" ]; then \
 		echo ""; \
 		echo "\e[32mAlready in dev container\e[0m"; \
@@ -91,15 +90,12 @@ dev:
 		$(MAKE) --no-print-directory devcontainer-start; \
 	fi
 
-## Stop devcontainer and cleanup
-dev-stop: devcontainer-stop
+dev-stop: devcontainer-stop ## Stop devcontainer and cleanup
 	@rm -f .devcontainer/.env
 
-# Stop and restart devcontainer
-redev: dev-stop dev
+redev: dev-stop dev ## Stop and restart devcontainer
 
-# Open VS Code in devcontainer
-code:
+code: ## Open VS Code in devcontainer
 	@if [ "$(TRL11_DEV_CONTAINER)" = "true" ]; then \
 		echo "\e[33mAlready in dev container - VS Code should already be connected\e[0m"; \
 	else \
