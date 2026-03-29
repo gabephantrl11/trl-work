@@ -32,11 +32,11 @@ ok()   { echo -e "${GREEN}✓${RESET} $*"; }
 warn() { echo -e "${YELLOW}⚠${RESET} $*"; }
 
 discover_repos() {
-    for dir in "${WORKSPACE_DIR}"/*/; do
+    for dir in "${WORKSPACE_DIR}"/.devcontainer/ "${WORKSPACE_DIR}"/*/; do
         [ -d "${dir}.git" ] || continue
         local name
         name="$(basename "$dir")"
-        [ "$name" = ".devcontainer" ] && continue
+
         echo "$name"
     done | sort
 }
@@ -49,8 +49,8 @@ in_repo() {
 # ─── Commands ─────────────────────────────────────────────────────────
 
 cmd_list() {
-    local verbose=false
-    [[ "${1:-}" == "-v" || "${1:-}" == "--verbose" || "${VERBOSE:-}" == "1" ]] && verbose=true
+    local verbose=true
+    [[ "${1:-}" == "-q" || "${1:-}" == "--quiet" || "${VERBOSE:-}" == "0" ]] && verbose=false
 
     local repos
     repos=$(discover_repos)
@@ -367,7 +367,7 @@ cmd_help() {
     echo -e "  ${CYAN}repo-help${RESET}            Show this help message"
     echo ""
     echo -e "${BOLD}Options (environment variables):${RESET}"
-    echo -e "  ${CYAN}VERBOSE=1${RESET}            Verbose output (e.g., make repo-list VERBOSE=1)"
+    echo -e "  ${CYAN}VERBOSE=0${RESET}            Quiet output (e.g., make repo-list VERBOSE=0)"
     echo -e "  ${CYAN}ALL=1${RESET}                Include remotes (e.g., make repo-branches ALL=1)"
     echo -e "  ${CYAN}PRUNE=1${RESET}              Prune stale tracking branches (e.g., make repo-fetch PRUNE=1)"
     echo -e "  ${CYAN}COUNT=N${RESET}              Number of commits to show (e.g., make repo-log COUNT=5)"
@@ -376,9 +376,128 @@ cmd_help() {
 }
 
 cmd_report() {
-    cmd_health
-    cmd_unpushed
-    cmd_outdated
+    local -a rows=()
+    local max_repo=4 max_branch=6 max_reason=6 max_resolve=14
+
+    for repo in $(discover_repos); do
+        local branch row_branch reason resolve
+        branch=$(in_repo "$repo" git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "UNKNOWN")
+
+        if [ "$branch" = "HEAD" ]; then
+            row_branch="detached"
+            reason="Detached HEAD"
+            resolve="git checkout <branch>"
+        elif [ "$branch" = "UNKNOWN" ]; then
+            row_branch="unknown"
+            reason="Cannot read branch"
+            resolve="Check repository state"
+        else
+            row_branch="$branch"
+
+            local dirty
+            dirty=$(in_repo "$repo" git status --porcelain 2>/dev/null | wc -l)
+            if [ "$dirty" -gt 0 ]; then
+                if [ "$dirty" -eq 1 ]; then
+                    reason="1 uncommitted change"
+                else
+                    reason="${dirty} uncommitted changes"
+                fi
+                resolve="git stash or commit changes"
+            else
+                local conflicts
+                conflicts=$(in_repo "$repo" git diff --name-only --diff-filter=U 2>/dev/null | wc -l)
+                if [ "$conflicts" -gt 0 ]; then
+                    reason="${conflicts} merge conflict(s)"
+                    resolve="Resolve conflicts and git add"
+                else
+                    local remote_count
+                    remote_count=$(in_repo "$repo" git remote 2>/dev/null | wc -l)
+                    if [ "$remote_count" -eq 0 ]; then
+                        reason="No remotes configured"
+                        resolve="git remote add origin <url>"
+                    else
+                        local upstream
+                        upstream=$(in_repo "$repo" git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "")
+                        if [ -z "$upstream" ]; then
+                            reason="No upstream tracking"
+                            resolve="git push -u origin ${branch}"
+                        else
+                            local ahead behind
+                            ahead=$(in_repo "$repo" git rev-list --count "${upstream}..HEAD" 2>/dev/null || echo "0")
+                            behind=$(in_repo "$repo" git rev-list --count "HEAD..${upstream}" 2>/dev/null || echo "0")
+                            if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
+                                reason="${behind} behind, ${ahead} ahead"
+                                resolve="git pull --rebase or git merge"
+                            elif [ "$behind" -gt 0 ]; then
+                                reason="${behind} behind upstream"
+                                resolve="git pull"
+                            elif [ "$ahead" -gt 0 ]; then
+                                reason="${ahead} unpushed commit(s)"
+                                resolve="git push"
+                            else
+                                continue
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+
+        rows+=("${repo}|${row_branch}|${reason}|${resolve}")
+
+        [ ${#repo} -gt $max_repo ] && max_repo=${#repo}
+        [ ${#row_branch} -gt $max_branch ] && max_branch=${#row_branch}
+        [ ${#reason} -gt $max_reason ] && max_reason=${#reason}
+        [ ${#resolve} -gt $max_resolve ] && max_resolve=${#resolve}
+    done
+
+    local w_repo=$((max_repo + 2))
+    local w_branch=$((max_branch + 2))
+    local w_reason=$((max_reason + 2))
+    local w_resolve=$((max_resolve + 2))
+
+    draw_line() {
+        local left="$1" mid="$2" right="$3"
+        printf "%s" "$left"
+        printf "%0.s─" $(seq 1 $w_repo); printf "%s" "$mid"
+        printf "%0.s─" $(seq 1 $w_branch); printf "%s" "$mid"
+        printf "%0.s─" $(seq 1 $w_reason); printf "%s" "$mid"
+        printf "%0.s─" $(seq 1 $w_resolve); printf "%s\n" "$right"
+    }
+
+    print_row() {
+        printf "│ %-*s│ %-*s│ %-*s│ %-*s│\n" \
+            $((w_repo - 1)) "$1" \
+            $((w_branch - 1)) "$2" \
+            $((w_reason - 1)) "$3" \
+            $((w_resolve - 1)) "$4"
+    }
+
+    header "Workspace Report"
+
+    if [ ${#rows[@]} -eq 0 ]; then
+        ok "All repositories are healthy — nothing to report"
+        return
+    fi
+
+    echo -e "${YELLOW}${#rows[@]} repo(s) need attention:${RESET}"
+    echo ""
+
+    draw_line "┌" "┬" "┐"
+    print_row "Repo" "Branch" "Reason" "How to Resolve"
+    draw_line "├" "┼" "┤"
+
+    local i=0
+    for row in "${rows[@]}"; do
+        IFS='|' read -r r_repo r_branch r_reason r_resolve <<< "$row"
+        print_row "$r_repo" "$r_branch" "$r_reason" "$r_resolve"
+        i=$((i + 1))
+        if [ $i -lt ${#rows[@]} ]; then
+            draw_line "├" "┼" "┤"
+        fi
+    done
+
+    draw_line "└" "┴" "┘"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────

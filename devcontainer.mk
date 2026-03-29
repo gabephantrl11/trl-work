@@ -2,8 +2,8 @@
 # Copyright (c) 2025 TRL11, Inc.  All rights reserved.
 #
 
-PROJ_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-PROJ_ROOT := $(patsubst %/,%,$(PROJ_ROOT))
+PROJ_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+PROJ_ROOT := $(patsubst %/,%,$(dir $(PROJ_ROOT)))
 
 WORKSPACE_NAME = trl-work
 DEVCONTAINER_HASH := $(shell printf '%s' "$(PROJ_ROOT)" | md5sum | cut -c1-8)

@@ -86,3 +86,9 @@ Many repos share common dependencies as git submodules under `extras/`:
 - `trl-ui-kit` — shared React component library
 
 After cloning or switching branches: `make update` to sync submodules.
+
+## Skills
+
+Workspace-level skills are in `.claude/skills/`:
+
+- `/update-repos` — Fetch and pull all repos that can be safely updated (no uncommitted changes, no detached HEAD), then report status. Skips repos that would lose work.
