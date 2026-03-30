@@ -31,7 +31,15 @@ repo_label() {
 ok()   { echo -e "${GREEN}✓${RESET} $*"; }
 warn() { echo -e "${YELLOW}⚠${RESET} $*"; }
 
+REPO_FILTER=""
+
+KNOWN_COMMANDS="list status unpushed branches fetch log outdated health exec report help"
+
 discover_repos() {
+    if [ -n "$REPO_FILTER" ]; then
+        echo "$REPO_FILTER"
+        return
+    fi
     for dir in "${WORKSPACE_DIR}"/.devcontainer/ "${WORKSPACE_DIR}"/*/; do
         [ -d "${dir}.git" ] || continue
         local name
@@ -351,20 +359,27 @@ cmd_help() {
     echo ""
     echo -e "${BOLD}repo.sh — workspace repository management${RESET}"
     echo ""
-    echo -e "${BOLD}Usage:${RESET} make repo-<command>"
+    echo -e "${BOLD}Usage:${RESET}"
+    echo -e "  make repos-<command>             Run on all repos"
+    echo -e "  make repo-<name>-<command>       Run on a single repo"
     echo ""
     echo -e "${BOLD}Commands:${RESET}"
-    echo -e "  ${CYAN}repo-list${RESET}            List all repositories"
-    echo -e "  ${CYAN}repo-status${RESET}          Show git status summary for each repository"
-    echo -e "  ${CYAN}repo-unpushed${RESET}        Check for unpushed commits, untracked branches, stashes"
-    echo -e "  ${CYAN}repo-branches${RESET}        Show branches for each repository"
-    echo -e "  ${CYAN}repo-fetch${RESET}           Fetch all remotes for all repositories"
-    echo -e "  ${CYAN}repo-log${RESET}             Show recent commits per repo (default: 3)"
-    echo -e "  ${CYAN}repo-outdated${RESET}        Show repos behind their upstream"
-    echo -e "  ${CYAN}repo-health${RESET}          Comprehensive health check across all repositories"
-    echo -e "  ${CYAN}repo-exec${RESET}            Execute a git command across all repositories"
-    echo -e "  ${CYAN}repo-report${RESET}          Full workspace report (health + unpushed + outdated)"
-    echo -e "  ${CYAN}repo-help${RESET}            Show this help message"
+    echo -e "  ${CYAN}list${RESET}            List repositories"
+    echo -e "  ${CYAN}status${RESET}          Show git status summary"
+    echo -e "  ${CYAN}unpushed${RESET}        Check for unpushed commits, untracked branches, stashes"
+    echo -e "  ${CYAN}branches${RESET}        Show branches"
+    echo -e "  ${CYAN}fetch${RESET}           Fetch all remotes"
+    echo -e "  ${CYAN}log${RESET}             Show recent commits (default: 3)"
+    echo -e "  ${CYAN}outdated${RESET}        Show repos behind their upstream"
+    echo -e "  ${CYAN}health${RESET}          Comprehensive health check"
+    echo -e "  ${CYAN}exec${RESET}            Execute a git command"
+    echo -e "  ${CYAN}report${RESET}          Show repos needing attention"
+    echo -e "  ${CYAN}help${RESET}            Show this help message"
+    echo ""
+    echo -e "${BOLD}Examples:${RESET}"
+    echo -e "  make repos-report              Report for all repos"
+    echo -e "  make repo-trl-viponly-status   Status for trl-viponly only"
+    echo -e "  make repo-trl-saver-log        Recent commits for trl-saver"
     echo ""
     echo -e "${BOLD}Options (environment variables):${RESET}"
     echo -e "  ${CYAN}VERBOSE=0${RESET}            Quiet output (e.g., make repo-list VERBOSE=0)"
@@ -381,16 +396,18 @@ cmd_report() {
 
     for repo in $(discover_repos); do
         local branch row_branch reason resolve
+        local -a reasons=()
+        local -a resolves=()
         branch=$(in_repo "$repo" git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "UNKNOWN")
 
         if [ "$branch" = "HEAD" ]; then
             row_branch="detached"
-            reason="Detached HEAD"
-            resolve="git checkout <branch>"
+            reasons+=("Detached HEAD")
+            resolves+=("git checkout <branch>")
         elif [ "$branch" = "UNKNOWN" ]; then
             row_branch="unknown"
-            reason="Cannot read branch"
-            resolve="Check repository state"
+            reasons+=("Cannot read branch")
+            resolves+=("Check repository state")
         else
             row_branch="$branch"
 
@@ -398,49 +415,53 @@ cmd_report() {
             dirty=$(in_repo "$repo" git status --porcelain 2>/dev/null | wc -l)
             if [ "$dirty" -gt 0 ]; then
                 if [ "$dirty" -eq 1 ]; then
-                    reason="1 uncommitted change"
+                    reasons+=("1 uncommitted change")
                 else
-                    reason="${dirty} uncommitted changes"
+                    reasons+=("${dirty} uncommitted changes")
                 fi
-                resolve="git stash or commit changes"
+                resolves+=("git stash or commit changes")
+            fi
+
+            local conflicts
+            conflicts=$(in_repo "$repo" git diff --name-only --diff-filter=U 2>/dev/null | wc -l)
+            if [ "$conflicts" -gt 0 ]; then
+                reasons+=("${conflicts} merge conflict(s)")
+                resolves+=("Resolve conflicts and git add")
+            fi
+
+            local remote_count
+            remote_count=$(in_repo "$repo" git remote 2>/dev/null | wc -l)
+            if [ "$remote_count" -eq 0 ]; then
+                reasons+=("No remotes")
+                resolves+=("git remote add origin <url>")
             else
-                local conflicts
-                conflicts=$(in_repo "$repo" git diff --name-only --diff-filter=U 2>/dev/null | wc -l)
-                if [ "$conflicts" -gt 0 ]; then
-                    reason="${conflicts} merge conflict(s)"
-                    resolve="Resolve conflicts and git add"
+                local upstream
+                upstream=$(in_repo "$repo" git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "")
+                if [ -z "$upstream" ]; then
+                    reasons+=("No upstream tracking")
+                    resolves+=("git push -u origin ${branch}")
                 else
-                    local remote_count
-                    remote_count=$(in_repo "$repo" git remote 2>/dev/null | wc -l)
-                    if [ "$remote_count" -eq 0 ]; then
-                        reason="No remotes configured"
-                        resolve="git remote add origin <url>"
-                    else
-                        local upstream
-                        upstream=$(in_repo "$repo" git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "")
-                        if [ -z "$upstream" ]; then
-                            reason="No upstream tracking"
-                            resolve="git push -u origin ${branch}"
-                        else
-                            local ahead behind
-                            ahead=$(in_repo "$repo" git rev-list --count "${upstream}..HEAD" 2>/dev/null || echo "0")
-                            behind=$(in_repo "$repo" git rev-list --count "HEAD..${upstream}" 2>/dev/null || echo "0")
-                            if [ "$behind" -gt 0 ] && [ "$ahead" -gt 0 ]; then
-                                reason="${behind} behind, ${ahead} ahead"
-                                resolve="git pull --rebase or git merge"
-                            elif [ "$behind" -gt 0 ]; then
-                                reason="${behind} behind upstream"
-                                resolve="git pull"
-                            elif [ "$ahead" -gt 0 ]; then
-                                reason="${ahead} unpushed commit(s)"
-                                resolve="git push"
-                            else
-                                continue
-                            fi
-                        fi
+                    local ahead behind
+                    ahead=$(in_repo "$repo" git rev-list --count "${upstream}..HEAD" 2>/dev/null || echo "0")
+                    behind=$(in_repo "$repo" git rev-list --count "HEAD..${upstream}" 2>/dev/null || echo "0")
+                    if [ "$behind" -gt 0 ]; then
+                        reasons+=("${behind} behind")
+                        resolves+=("git pull")
+                    fi
+                    if [ "$ahead" -gt 0 ]; then
+                        reasons+=("${ahead} ahead")
+                        resolves+=("git push")
                     fi
                 fi
             fi
+        fi
+
+        if [ ${#reasons[@]} -eq 0 ]; then
+            reason="OK"
+            resolve=""
+        else
+            reason=$(printf '%s' "${reasons[0]}"; for r in "${reasons[@]:1}"; do printf ', %s' "$r"; done)
+            resolve=$(printf '%s' "${resolves[0]}"; for r in "${resolves[@]:1}"; do printf ', %s' "$r"; done)
         fi
 
         rows+=("${repo}|${row_branch}|${reason}|${resolve}")
@@ -465,32 +486,55 @@ cmd_report() {
         printf "%0.s─" $(seq 1 $w_resolve); printf "%s\n" "$right"
     }
 
-    print_row() {
-        printf "│ %-*s│ %-*s│ %-*s│ %-*s│\n" \
-            $((w_repo - 1)) "$1" \
-            $((w_branch - 1)) "$2" \
-            $((w_reason - 1)) "$3" \
-            $((w_resolve - 1)) "$4"
+    print_cell() {
+        local width="$1" color="$2" text="$3"
+        local pad=$((width - 1 - ${#text}))
+        printf "│ %b%-s%b%*s" "$color" "$text" "$RESET" "$pad" ""
     }
+
+    print_row() {
+        local c1="$1" c2="$2" c3="$3" c4="$4"
+        local color1="${5:-}" color2="${6:-}" color3="${7:-}" color4="${8:-}"
+        print_cell "$w_repo" "$color1" "$c1"
+        print_cell "$w_branch" "$color2" "$c2"
+        print_cell "$w_reason" "$color3" "$c3"
+        print_cell "$w_resolve" "$color4" "$c4"
+        printf "│\n"
+    }
+
+    local issues=0
+    for row in "${rows[@]}"; do
+        IFS='|' read -r _ _ r_reason _ <<< "$row"
+        [ "$r_reason" != "OK" ] && issues=$((issues + 1))
+    done
 
     header "Workspace Report"
 
-    if [ ${#rows[@]} -eq 0 ]; then
-        ok "All repositories are healthy — nothing to report"
-        return
+    if [ "$issues" -eq 0 ]; then
+        echo -e "${GREEN}All ${#rows[@]} repositories are healthy${RESET}"
+    else
+        echo -e "${YELLOW}${issues} of ${#rows[@]} repo(s) need attention${RESET}"
     fi
-
-    echo -e "${YELLOW}${#rows[@]} repo(s) need attention:${RESET}"
     echo ""
 
     draw_line "┌" "┬" "┐"
-    print_row "Repo" "Branch" "Reason" "How to Resolve"
+    print_row "Repo" "Branch" "Reason" "How to Resolve" "$BOLD" "$BOLD" "$BOLD" "$BOLD"
     draw_line "├" "┼" "┤"
 
     local i=0
     for row in "${rows[@]}"; do
         IFS='|' read -r r_repo r_branch r_reason r_resolve <<< "$row"
-        print_row "$r_repo" "$r_branch" "$r_reason" "$r_resolve"
+        local rc
+        if [ "$r_reason" = "OK" ]; then
+            rc="$GREEN"
+        else
+            rc="$YELLOW"
+        fi
+        local bc="$DIM"
+        if [[ "$r_branch" != "dev" && "$r_branch" != "main" && "$r_branch" != "master" ]]; then
+            bc="$CYAN"
+        fi
+        print_row "$r_repo" "$r_branch" "$r_reason" "$r_resolve" "$BOLD" "$bc" "$rc" "$DIM"
         i=$((i + 1))
         if [ $i -lt ${#rows[@]} ]; then
             draw_line "├" "┼" "┤"
@@ -500,10 +544,39 @@ cmd_report() {
     draw_line "└" "┴" "┘"
 }
 
+# ─── Single-repo mode ─────────────────────────────────────────────────
+
+parse_single() {
+    local input="$1"
+    local cmd repo_name
+
+    for cmd in $KNOWN_COMMANDS; do
+        if [[ "$input" == *"-${cmd}" ]]; then
+            repo_name="${input%-"${cmd}"}"
+            if [ -d "${WORKSPACE_DIR}/${repo_name}/.git" ]; then
+                REPO_FILTER="$repo_name"
+                PARSED_COMMAND="$cmd"
+                return
+            fi
+        fi
+    done
+
+    echo -e "${RED}Cannot parse '${input}' into <repo>-<command>${RESET}" >&2
+    echo -e "Expected: ${CYAN}repo-<name>-<command>${RESET} (e.g., repo-trl-viponly-report)" >&2
+    exit 1
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────
 
-command="${1:-help}"
-shift || true
+if [ "${1:-}" = "--single" ]; then
+    shift
+    parse_single "$1"
+    command="$PARSED_COMMAND"
+    shift
+else
+    command="${1:-help}"
+    shift || true
+fi
 
 case "$command" in
     list)       cmd_list "$@" ;;

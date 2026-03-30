@@ -61,10 +61,14 @@
 			],
 			"settings": {
 				"editor.formatOnSave": true,
+				"files.exclude": {
+					"**": true
+				},
 				"files.watcherExclude": {
-					"**/build/**": true,
-					"**/node_modules/**": true,
-					"**/.pytest_cache/**": true
+					"**": true
+				},
+				"search.exclude": {
+					"**": true
 				},
 				"[python]": {
 					"editor.defaultFormatter": "charliermarsh.ruff"

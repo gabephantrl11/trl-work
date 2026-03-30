@@ -18,13 +18,16 @@ include $(DEVCONTAINER_DIR)/devcontainer.mk
 
 REPO := $(TOOLS_DIR)/repo.sh
 
-repo-%: ## Repo management (repo-help for details)
+repos-%: ## Run command on all repos (repos-help for details)
 	@$(REPO) $*
+
+repo-%: ## Run command on single repo (e.g., repo-trl-viponly-report)
+	@$(REPO) --single "$*"
 
 help: ## Show available targets
 	$(call list_targets,Workspace Management)
 	$(call print_section,Repository Management)
-	$(call print_text,All repo-* targets delegate to tools/repo.sh.)
-	$(call print_text,Run make repo-help for commands and options.)
+	$(call print_text,repos-* runs on all repos$(,) repo-<name>-<cmd> runs on one.)
+	$(call print_text,Run make repos-help for commands and options.)
 
 .PHONY: help
