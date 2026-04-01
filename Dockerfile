@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     $(cat dependencies.txt | sort -u | xargs) && \
-    pip install uv
+    pip install uv openpyxl
 
 # Install node tools
 ENV NVM_DIR=/usr/local/nvm

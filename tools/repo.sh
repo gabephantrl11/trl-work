@@ -33,7 +33,7 @@ warn() { echo -e "${YELLOW}⚠${RESET} $*"; }
 
 REPO_FILTER=""
 
-KNOWN_COMMANDS="list status unpushed branches fetch log outdated health exec report help"
+KNOWN_COMMANDS="list status unpushed branches fetch log changelog outdated health exec report help"
 
 discover_repos() {
     if [ -n "$REPO_FILTER" ]; then
@@ -243,6 +243,38 @@ cmd_log() {
     done
 }
 
+cmd_changelog() {
+    local since="${1:-${SINCE:-}}"
+    local until="${2:-${UNTIL:-}}"
+
+    if [ -z "$since" ] || [ -z "$until" ]; then
+        echo -e "${RED}Usage: repo.sh changelog <since> <until>${RESET}"
+        echo -e "  Dates in YYYY-MM-DD format."
+        echo -e "  Example: repo.sh changelog 2026-03-01 2026-03-31"
+        echo -e "  Or via env: make repos-changelog SINCE=2026-03-01 UNTIL=2026-03-31"
+        exit 1
+    fi
+
+    header "Changelog (${since} .. ${until})"
+
+    for repo in $(discover_repos); do
+        local output
+        output=$(in_repo "$repo" git log \
+            --oneline \
+            --since="$since" \
+            --until="$until" \
+            --format="%ai  %an  %s%d" \
+            --date=iso \
+            2>/dev/null || true)
+
+        if [ -n "$output" ]; then
+            repo_label "$repo"
+            echo ""
+            echo "$output" | sed 's/^/  /'
+        fi
+    done
+}
+
 cmd_outdated() {
     header "Outdated Repositories (behind upstream)"
 
@@ -370,6 +402,7 @@ cmd_help() {
     echo -e "  ${CYAN}branches${RESET}        Show branches"
     echo -e "  ${CYAN}fetch${RESET}           Fetch all remotes"
     echo -e "  ${CYAN}log${RESET}             Show recent commits (default: 3)"
+    echo -e "  ${CYAN}changelog${RESET}       Oneline log with author, date, subject, refs by date range"
     echo -e "  ${CYAN}outdated${RESET}        Show repos behind their upstream"
     echo -e "  ${CYAN}health${RESET}          Comprehensive health check"
     echo -e "  ${CYAN}exec${RESET}            Execute a git command"
@@ -387,6 +420,8 @@ cmd_help() {
     echo -e "  ${CYAN}PRUNE=1${RESET}              Prune stale tracking branches (e.g., make repo-fetch PRUNE=1)"
     echo -e "  ${CYAN}COUNT=N${RESET}              Number of commits to show (e.g., make repo-log COUNT=5)"
     echo -e "  ${CYAN}CMD=\"...\"${RESET}            Git command to execute (e.g., make repo-exec CMD=\"remote -v\")"
+    echo -e "  ${CYAN}SINCE=YYYY-MM-DD${RESET}   Start date for changelog (e.g., make repos-changelog SINCE=2026-03-01 UNTIL=2026-03-31)"
+    echo -e "  ${CYAN}UNTIL=YYYY-MM-DD${RESET}   End date for changelog"
     echo ""
 }
 
@@ -585,6 +620,7 @@ case "$command" in
     branches)   cmd_branches "$@" ;;
     fetch)      cmd_fetch "$@" ;;
     log)        cmd_log "$@" ;;
+    changelog)  cmd_changelog "$@" ;;
     outdated)   cmd_outdated "$@" ;;
     health)     cmd_health "$@" ;;
     exec)       cmd_exec "$@" ;;

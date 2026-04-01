@@ -3,7 +3,9 @@
     "allow": [
       "Bash(echo \"exit: $?\")",
       "Bash(chmod:*)",
-      "Bash(/workspaces/trl-work/.claude/skills/update-repos/update-repos.sh 2>&1)"
+      "Bash(/workspaces/trl-work/.claude/skills/update-repos/update-repos.sh 2>&1)",
+      "Skill(clickup-timesheet)",
+      "Bash(pip install:*)"
     ]
   }
 }
