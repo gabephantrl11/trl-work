@@ -28,7 +28,7 @@ include $(DEVCONTAINER_DIR)/devcontainer.mk
 # Repository management
 # -----------------------------------------------------------------------------
 
-REPO := $(TOOLS_DIR)/repo.sh
+REPO := $(TOOLS_DIR)/repos.sh
 
 repos-%: ## Run command on all repos (repos-help for details)
 	@$(REPO) $*
