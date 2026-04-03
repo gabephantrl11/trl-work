@@ -3,13 +3,15 @@
     "allow": [
       "Bash(echo \"exit: $?\")",
       "Bash(chmod:*)",
-      "Bash(/workspaces/trl-work/.claude/skills/update-repos/update-repos.sh 2>&1)",
+      "Bash(/workspaces/trl-work/tools/repo.sh:*)",
       "Skill(clickup-timesheet)",
       "Bash(pip install:*)",
       "mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('valid:', d['valid']\\); print\\('type:', d['diagramType']\\); print\\('has SVG:', bool\\(d.get\\('rawSVG',''\\)\\)\\); print\\('has PNG:', bool\\(d.get\\('renderedPNG',''\\)\\)\\)\")",
       "Bash(python3 -c ':*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

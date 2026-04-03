@@ -91,4 +91,4 @@ After cloning or switching branches: `make update` to sync submodules.
 
 Workspace-level skills are in `.claude/skills/`:
 
-- `/update-repos` — Fetch and pull all repos that can be safely updated (no uncommitted changes, no detached HEAD), then report status. Skips repos that would lose work.
+- `/repo` — Workspace repository management via `repo.sh`. Commands: status, update, report, health, log, changelog, branches, unpushed, fetch, outdated, exec. Defaults to `report` when invoked with no arguments.
