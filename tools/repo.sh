@@ -33,7 +33,7 @@ warn() { echo -e "${YELLOW}⚠${RESET} $*"; }
 
 REPO_FILTER=""
 
-KNOWN_COMMANDS="list status unpushed branches fetch log changelog outdated health exec report help"
+KNOWN_COMMANDS="list status unpushed branches fetch update log changelog outdated health exec report help"
 
 discover_repos() {
     if [ -n "$REPO_FILTER" ]; then
@@ -225,6 +225,112 @@ cmd_fetch() {
     echo -e "${GREEN}${success} succeeded${RESET}, ${RED}${failed} failed${RESET}"
 }
 
+cmd_update() {
+    header "Updating Repositories"
+
+    local updated=0
+    local skipped=0
+    local failed=0
+
+    for repo in $(discover_repos); do
+        repo_label "$repo"
+
+        local branch
+        branch=$(in_repo "$repo" git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "UNKNOWN")
+        if [ "$branch" = "HEAD" ]; then
+            echo -e "${YELLOW}SKIPPED${RESET} — detached HEAD"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        local dirty
+        dirty=$(in_repo "$repo" git status --porcelain 2>/dev/null | wc -l)
+        if [ "$dirty" -gt 0 ]; then
+            echo -e "${YELLOW}SKIPPED${RESET} — ${dirty} uncommitted change(s)  ${DIM}(${branch})${RESET}"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        local conflicts
+        conflicts=$(in_repo "$repo" git diff --name-only --diff-filter=U 2>/dev/null | wc -l)
+        if [ "$conflicts" -gt 0 ]; then
+            echo -e "${YELLOW}SKIPPED${RESET} — ${conflicts} merge conflict(s)  ${DIM}(${branch})${RESET}"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        local remote_count
+        remote_count=$(in_repo "$repo" git remote 2>/dev/null | wc -l)
+        if [ "$remote_count" -eq 0 ]; then
+            echo -e "${YELLOW}SKIPPED${RESET} — no remotes configured  ${DIM}(${branch})${RESET}"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        if ! in_repo "$repo" git fetch --all --tags --prune >/dev/null 2>&1; then
+            echo -e "${RED}FAILED${RESET} — fetch error"
+            failed=$((failed + 1))
+            continue
+        fi
+
+        local upstream
+        upstream=$(in_repo "$repo" git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "")
+        if [ -z "$upstream" ]; then
+            echo -e "${CYAN}FETCHED${RESET} — no upstream tracking for ${branch}"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        local ahead behind
+        ahead=$(in_repo "$repo" git rev-list --count "${upstream}..HEAD" 2>/dev/null || echo "0")
+        behind=$(in_repo "$repo" git rev-list --count "HEAD..${upstream}" 2>/dev/null || echo "0")
+
+        if [ "$behind" -eq 0 ]; then
+            echo -e "${GREEN}UP TO DATE${RESET}  ${DIM}(${branch})${RESET}"
+
+            if [ -f "${WORKSPACE_DIR}/${repo}/.gitmodules" ]; then
+                local outdated_subs
+                outdated_subs=$(in_repo "$repo" git submodule status --recursive 2>/dev/null | grep -c '^+' || true)
+                if [ "$outdated_subs" -gt 0 ]; then
+                    if in_repo "$repo" git submodule update --init --recursive >/dev/null 2>&1; then
+                        repo_label ""
+                        echo -e "${DIM}synced ${outdated_subs} submodule(s)${RESET}"
+                    else
+                        repo_label ""
+                        echo -e "${YELLOW}submodule update failed${RESET}"
+                    fi
+                fi
+            fi
+            continue
+        fi
+
+        if in_repo "$repo" git merge --ff-only "${upstream}" >/dev/null 2>&1; then
+            local msg="${GREEN}UPDATED${RESET} — pulled ${behind} commit(s)"
+            if [ "$ahead" -gt 0 ]; then
+                msg="${msg} ${DIM}(${ahead} unpushed)${RESET}"
+            fi
+            echo -e "${msg}  ${DIM}(${branch})${RESET}"
+            updated=$((updated + 1))
+
+            if [ -f "${WORKSPACE_DIR}/${repo}/.gitmodules" ]; then
+                if in_repo "$repo" git submodule update --init --recursive >/dev/null 2>&1; then
+                    repo_label ""
+                    echo -e "${DIM}submodules synced${RESET}"
+                else
+                    repo_label ""
+                    echo -e "${YELLOW}submodule update failed${RESET}"
+                fi
+            fi
+        else
+            echo -e "${YELLOW}SKIPPED${RESET} — cannot fast-forward ${branch} (${behind} behind, ${ahead} ahead)"
+            skipped=$((skipped + 1))
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}${updated} updated${RESET}, ${YELLOW}${skipped} skipped${RESET}, ${RED}${failed} failed${RESET}"
+}
+
 cmd_log() {
     local count="${1:-${COUNT:-3}}"
 
@@ -401,6 +507,7 @@ cmd_help() {
     echo -e "  ${CYAN}unpushed${RESET}        Check for unpushed commits, untracked branches, stashes"
     echo -e "  ${CYAN}branches${RESET}        Show branches"
     echo -e "  ${CYAN}fetch${RESET}           Fetch all remotes"
+    echo -e "  ${CYAN}update${RESET}          Fetch and fast-forward all clean repos"
     echo -e "  ${CYAN}log${RESET}             Show recent commits (default: 3)"
     echo -e "  ${CYAN}changelog${RESET}       Oneline log with author, date, subject, refs by date range"
     echo -e "  ${CYAN}outdated${RESET}        Show repos behind their upstream"
@@ -619,6 +726,7 @@ case "$command" in
     unpushed)   cmd_unpushed "$@" ;;
     branches)   cmd_branches "$@" ;;
     fetch)      cmd_fetch "$@" ;;
+    update)     cmd_update "$@" ;;
     log)        cmd_log "$@" ;;
     changelog)  cmd_changelog "$@" ;;
     outdated)   cmd_outdated "$@" ;;
