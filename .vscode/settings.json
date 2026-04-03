@@ -1,10 +1,42 @@
 {
     "files.exclude": {},
     "files.watcherExclude": {
-        "**": true
+        "threat_assessment/**": true,
+        "trl-commander/**": true,
+        "trl-eng-servers/**": true,
+        "trl-forge/**": true,
+        "trl-foveactl/**": true,
+        "trl-jetson-bsp/**": true,
+        "trl-jojo-ai/**": true,
+        "trl-orbitvision/**": true,
+        "trl-saver/**": true,
+        "trl-saver-2.x/**": true,
+        "trl-telescopectrl/**": true,
+        "trl-udl/**": true,
+        "trl-vip1st/**": true,
+        "trl-viplink/**": true,
+        "trl-viponly/**": true,
+        "trl-xclops-ng/**": true,
+        "trl-yocto-bsp/**": true
     },
     "search.exclude": {
-        "**": true
+        "threat_assessment/**": true,
+        "trl-commander/**": true,
+        "trl-eng-servers/**": true,
+        "trl-forge/**": true,
+        "trl-foveactl/**": true,
+        "trl-jetson-bsp/**": true,
+        "trl-jojo-ai/**": true,
+        "trl-orbitvision/**": true,
+        "trl-saver/**": true,
+        "trl-saver-2.x/**": true,
+        "trl-telescopectrl/**": true,
+        "trl-udl/**": true,
+        "trl-vip1st/**": true,
+        "trl-viplink/**": true,
+        "trl-viponly/**": true,
+        "trl-xclops-ng/**": true,
+        "trl-yocto-bsp/**": true
     },
     "search.followSymlinks": false,
     "files.enableTrash": false
