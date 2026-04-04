@@ -4,13 +4,13 @@
 	"name": "TRL Work Dev Environment",
 	"initializeCommand": "${localWorkspaceFolder}/.devcontainer/setup-env.sh",
 	"build": {
-		"context": "..",
+		"context": ".",
 		"dockerfile": "./Dockerfile",
 		"args": {
 			"NODE_VERSION": "${localEnv:NODE_VERSION:24.11.1}",
 			"NVM_VERSION": "${localEnv:NVM_VERSION:0.40.2}",
 			"PYTHON_VERSION": "${localEnv:PYTHON_VERSION:3.10}",
-			"UBUNTU_VERSION": "${localEnv:UBUNTU_VERSION:22.04}"
+			"UBUNTU_VERSION": "${localEnv:UBUNTU_VERSION:24.04}"
 		}
 	},
 	"runArgs": [
@@ -34,6 +34,8 @@
 		"source=${env:HOME}/.npm,target=/home/dev/.npm,type=bind",
 		"source=${env:HOME}/.ssh,target=/home/dev/.ssh,type=bind",
 		"source=${env:HOME}/.claude,target=/home/dev/.claude,type=bind",
+		"source=${env:HOME}/.config,target=/home/dev/.config,type=bind",
+		"source=${env:HOME}/.slack,target=/home/dev/.slack,type=bind",
 		"source=/dev,target=/dev,type=bind",
 		"source=/etc/localtime,target=/etc/localtime,type=bind,readonly",
 		"source=/etc/timezone,target=/etc/timezone,type=bind,readonly",

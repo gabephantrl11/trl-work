@@ -1,4 +1,4 @@
-ARG UBUNTU_VERSION=22.04
+ARG UBUNTU_VERSION=24.04
 
 FROM ubuntu:${UBUNTU_VERSION}
 
@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /build
 
 # Copy .env once for proxy config and user creation
-COPY .devcontainer/.env /build/.env
+COPY .env /build/.env
 
 # Configure apt proxy if provided (setup-env.sh already verified reachability)
 RUN . /build/.env && \
@@ -26,12 +26,12 @@ RUN . /build/.env && \
     fi
 
 # Install system dependencies
-COPY .devcontainer/dependencies.txt dependencies.txt
+COPY dependencies.txt dependencies.txt
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     $(cat dependencies.txt | sort -u | xargs) && \
-    pip install uv openpyxl
+    pip install --break-system-packages uv openpyxl
 
 # Install node tools
 ENV NVM_DIR=/usr/local/nvm
@@ -61,6 +61,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Add dev user and group
 RUN set -a && . /build/.env && set +a && \
     rm -f /build/.env && \
+    userdel ubuntu 2>/dev/null || true && \
+    groupdel ubuntu 2>/dev/null || true && \
     groupadd -g ${DOCKER_GID} docker || true && \
     groupadd -g ${DEV_GID} -r dev && \
     useradd -u ${DEV_UID} -m -r -g dev -s /bin/bash dev && \
@@ -71,7 +73,7 @@ RUN set -a && . /build/.env && set +a && \
     echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Add development files
-COPY .devcontainer/devcontainer.aliases /home/dev/.bash_aliases
+COPY devcontainer.aliases /home/dev/.bash_aliases
 RUN touch /home/dev/.hushlogin && \
     git clone https://github.com/magicmonty/bash-git-prompt.git /home/dev/.bash-git-prompt --depth=1 && \
     echo "source ~/.bash-git-prompt/gitprompt.sh" >> /home/dev/.bashrc && \
@@ -84,8 +86,20 @@ RUN rm -f /etc/apt/apt.conf.d/01proxy
 # Capture build date
 RUN date -u '+%Y-%m-%d %H:%M:%S UTC' > /etc/devcontainer-build-date
 
+# Install ClickUp CLI (henryreith/clickup-cli)
+RUN git clone --depth 1 https://github.com/henryreith/clickup-cli.git /opt/clickup-cli && \
+    cd /opt/clickup-cli && npm install && npm run build && \
+    printf '#!/bin/bash\nexec node /opt/clickup-cli/dist/clickup.js "$@"\n' > /usr/local/bin/clickup && \
+    chmod +x /usr/local/bin/clickup
+
+# Install Google Workspace CLI
+RUN npm install -g @googleworkspace/cli
+
 USER dev
 
 # Install Claude CLI
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/dev/.local/bin:${PATH}"
+
+# Install Slack CLI
+RUN curl -fsSL https://downloads.slack-edge.com/slack-cli/install.sh | bash

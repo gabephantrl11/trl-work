@@ -37,6 +37,13 @@ repo-%: ## Run command on single repo (e.g., repo-trl-viponly-report)
 	@$(REPO) --single "$*"
 
 # -----------------------------------------------------------------------------
+# Setup
+# -----------------------------------------------------------------------------
+
+setup: ## Run setup wizard to configure CLI tools (gh, clickup, gws, slack)
+	@$(TOOLS_DIR)/setup.sh
+
+# -----------------------------------------------------------------------------
 # Install
 # -----------------------------------------------------------------------------
 
@@ -64,4 +71,4 @@ help: ## Show available targets
 	$(call print_text,)
 	$(call print_text,Run 'make repos-help' for available commands and options.)
 
-.PHONY: help install
+.PHONY: help install setup

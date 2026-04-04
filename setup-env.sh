@@ -10,6 +10,8 @@ ENV_FILE="$SCRIPT_DIR/.env"
 
 # Create directories that will be mounted
 mkdir -p "$HOME/.claude"
+mkdir -p "$HOME/.config"
+mkdir -p "$HOME/.slack"
 
 # Get the required values
 DEV_UID=$(id -u)

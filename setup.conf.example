@@ -1,0 +1,18 @@
+# setup.conf — local account configuration for `make setup`
+#
+# Copy this file to setup.conf and fill in your values, or run
+# `make setup` and it will auto-detect and populate them for you.
+# setup.conf is gitignored and will not be committed.
+
+# GitHub
+GH_USERNAME=
+GH_SCOPES="repo read:org workflow"
+
+# ClickUp
+CLICKUP_WORKSPACE=
+
+# Google Workspace
+GWS_EMAIL=
+
+# Slack
+SLACK_WORKSPACE=
