@@ -11,7 +11,12 @@
       "Bash(python3 -c ':*)",
       "Bash(ls:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(clickup workspace:*)",
+      "Bash(bash:*)",
+      "Bash(clickup config:*)",
+      "Bash(gws auth:*)",
+      "Bash(gws --version)"
     ]
   }
 }

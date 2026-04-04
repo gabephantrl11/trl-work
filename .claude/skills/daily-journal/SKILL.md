@@ -122,34 +122,35 @@ gws drive files list \
 The `slack` CLI is for app development, not API access. Use `curl` with
 the Slack user token from `~/.slack/credentials.json`.
 
-**Scope limitation:** The Slack CLI token lacks `search:read` scope, so
-`search.messages` will fail. Use `conversations.history` on specific
-channels instead to read recent messages.
+**Token:** Use the Team Reports user token stored at
+`~/.slack/team-reports-token`. This token has `channels:history`,
+`groups:history`, and `search:read` scopes. Fall back to the CLI
+token if the team-reports token is missing.
 
 ```bash
-# Load token from Slack CLI credentials
-SLACK_TOKEN="${SLACK_TOKEN:-$(python3 -c "
+# Load token (prefer team-reports token, fall back to CLI token)
+SLACK_TOKEN="${SLACK_TOKEN:-$(cat "$HOME/.slack/team-reports-token" 2>/dev/null)}"
+if [ -z "$SLACK_TOKEN" ]; then
+  SLACK_TOKEN=$(python3 -c "
 import json
 with open('$HOME/.slack/credentials.json') as f:
     creds = json.load(f)
 for ws in creds.values():
     print(ws.get('token', '')); break
-" 2>/dev/null)}"
+" 2>/dev/null)
+fi
 
-# List channels Gabe is a member of
+# Search for Gabe's messages today using search.messages
 curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-  "https://slack.com/api/users.conversations?types=public_channel,private_channel&limit=100" \
-  | jq .
-
-# Read recent messages from a specific channel
-curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-  "https://slack.com/api/conversations.history?channel=<channel_id>&oldest=<unix_ts_start_of_day>&limit=50" \
-  | jq .
+  --data-urlencode "query=from:gabe after:$(date +%Y-%m-%d)" \
+  "https://slack.com/api/search.messages?count=100"
 ```
 
-To gather Slack activity: list channels, then read today's messages from
-each channel. Filter for messages authored by `U038URT3K38` (Gabe's user
-ID). Capture `text`, `channel`, and `permalink` for each message.
+Results are in `.messages.matches[]`. Each match contains `text`,
+`channel.name`, `permalink`, `ts`, and `username`.
+
+If `search.messages` fails (missing scope), fall back to per-channel
+`conversations.history` scanning and filter for user `U038URT3K38`.
 
 If the token is missing or API calls fail, skip Slack silently.
 
@@ -213,31 +214,24 @@ clickup time list \
   --format json
 ```
 
-**Slack** — read recent messages from channels Gabe is in.
-
-The Slack CLI token lacks `search:read` scope, so use
-`conversations.history` per channel instead of `search.messages`.
+**Slack** — search for Gabe's messages today.
 
 ```bash
-SLACK_TOKEN="${SLACK_TOKEN:-$(python3 -c "
+SLACK_TOKEN="${SLACK_TOKEN:-$(cat "$HOME/.slack/team-reports-token" 2>/dev/null)}"
+if [ -z "$SLACK_TOKEN" ]; then
+  SLACK_TOKEN=$(python3 -c "
 import json
 with open('$HOME/.slack/credentials.json') as f:
     creds = json.load(f)
 for ws in creds.values():
     print(ws.get('token', '')); break
-" 2>/dev/null)}"
+" 2>/dev/null)
+fi
 
 if [ -n "$SLACK_TOKEN" ]; then
-  # List channels Gabe is in
   curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-    "https://slack.com/api/users.conversations?types=public_channel,private_channel&limit=100" \
-    2>/dev/null
-
-  # For each channel, fetch today's messages
-  START_TS=$(date -d "today 00:00:00" +%s)
-  curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-    "https://slack.com/api/conversations.history?channel=<channel_id>&oldest=$START_TS&limit=50" \
-    2>/dev/null
+    --data-urlencode "query=from:gabe after:$(date +%Y-%m-%d)" \
+    "https://slack.com/api/search.messages?count=100"
 fi
 ```
 

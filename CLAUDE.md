@@ -62,6 +62,7 @@ Workspace-level skills are in `.claude/skills/`:
 
 - `/repos` — Repository management (see Repo Tool above)
 - `/clickup-timesheet` — Generate and submit ClickUp time entries from sprint tickets and git history
+- `/daily-journal` — Summarize today's work and append to the ClickUp journal
 - `/missions-summary` — Generate missions & projects summary report to `reports/`
 - `/software-milestones` — Generate SW team milestones timeline to `reports/`
-- `/daily-journal` — Summarize today's work and append to the ClickUp journal
+- `/team-report` — SW team activity report (Gabe, Said, Jackson) from git, ClickUp, Drive, Slack
