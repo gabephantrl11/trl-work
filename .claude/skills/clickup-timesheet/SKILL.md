@@ -12,14 +12,17 @@ description: >
   to sprint tickets or git activity. Even if the user just says
   "timesheet" or "time entries", use this skill.
 user-invokable: true
-allowed-tools: Bash, Read, Write, Grep, Glob, Agent, mcp__claude_ai_ClickUp__clickup_resolve_assignees, mcp__claude_ai_ClickUp__clickup_filter_tasks, mcp__claude_ai_ClickUp__clickup_get_time_entries, mcp__claude_ai_ClickUp__clickup_get_task_time_entries, mcp__claude_ai_ClickUp__clickup_add_time_entry, mcp__claude_ai_ClickUp__clickup_get_task
+allowed-tools: Bash, Read, Write, Grep, Glob, Agent
 ---
 
 # ClickUp Timesheet Generator
 
 Generate realistic time entries for ClickUp by cross-referencing sprint
 tickets, git commit history, and the user's stated work patterns, then
-submit them via the ClickUp MCP tools.
+submit them via the ClickUp CLI.
+
+All ClickUp operations use the `clickup` CLI with `--format json` for
+machine-readable output. Parse JSON with `jq` or Python.
 
 ## Overview
 
@@ -40,7 +43,7 @@ Both inputs are gathered automatically — no user action needed:
    user, closed within the target date range. Provides ticket IDs,
    names, story points, sprint membership, and close dates.
 2. **Git commit history** (automatic) — Collected by running
-   `repo.sh changelog` across all workspace repos. Branch names
+   `repos.sh changelog` across all workspace repos. Branch names
    containing ticket IDs (e.g.,
    `feature/SW-4542-Xclops-Video-recording`) link commits to tickets.
    Commit timestamps show which days had activity on which tickets.
@@ -61,6 +64,70 @@ These are always used. Do not ask the user about them:
 | Max entries per single-day ticket | 2 |
 | Ticket filter | Only SW-* sprint tickets |
 
+## CLI Reference
+
+All ClickUp operations use the `clickup` CLI. Always pass `--format json`
+for machine-readable output.
+
+### Get current user ID
+
+```bash
+clickup workspace members --format json | jq '.[] | select(.user.username == "<username>") | .user.id'
+```
+
+Or get all members and match by name/email.
+
+### Search tasks
+
+```bash
+clickup task search \
+  --assignee <user_id> \
+  --include-closed \
+  --space-id <space_id> \
+  --order-by due_date \
+  --format json
+```
+
+Use `--page 0`, `--page 1`, etc. to paginate (keep going until results
+are empty or fewer than a full page).
+
+### Get task details
+
+```bash
+clickup task get <task_id> --format json
+```
+
+Works with both internal IDs and custom IDs (e.g., `SW-1234`).
+
+### List time entries (workspace-wide)
+
+```bash
+clickup time list \
+  --start "YYYY-MM-DD" \
+  --end "YYYY-MM-DD" \
+  --assignee <user_id> \
+  --format json
+```
+
+### List time entries (per task)
+
+```bash
+clickup time list --task-id <task_id> --format json
+```
+
+### Create a time entry
+
+```bash
+clickup time create \
+  --task-id <task_id> \
+  --start "<unix_ms_or_date_string>" \
+  --duration <milliseconds> \
+  --format json
+```
+
+Duration is in **milliseconds** (1 hour = 3600000).
+Start can be a Unix timestamp in ms or an ISO 8601 date string.
+
 ## Workflow
 
 ### Step 1 — Collect the git log
@@ -80,7 +147,7 @@ Then run the changelog command directly to collect commit history
 across all workspace repos:
 
 ```bash
-bash /workspaces/trl-work/.devcontainer/tools/repo.sh changelog YYYY-MM-DD YYYY-MM-DD
+bash /workspaces/trl-work/trl-work/tools/repos.sh changelog YYYY-MM-DD YYYY-MM-DD
 ```
 
 Save the output to a variable for parsing in Step 3.
@@ -91,20 +158,51 @@ parameters. Use the hardcoded defaults above.
 
 ### Step 2 — Fetch ClickUp data and existing time entries
 
-Use `clickup_resolve_assignees` with `["me"]` to get the user's ID.
+Get the user's ClickUp member ID:
 
-Use `clickup_filter_tasks` to find:
-- Tasks assigned to the user, closed within the date range
-  (`date_done_from`, `date_done_to`, `include_closed: true`)
-- Currently in-progress tasks (`statuses: ["in progress", "Open"]`)
+```bash
+clickup workspace members --format json
+```
+
+Parse the JSON to find the current user's `user.id` (match by name
+or email). Store this as `USER_ID`.
+
+Search for tasks assigned to the user, closed within the date range:
+
+```bash
+clickup task search \
+  --assignee $USER_ID \
+  --include-closed \
+  --order-by due_date \
+  --format json \
+  --page 0
+```
+
+Paginate through all results (page 0, 1, 2, ...) until the result set
+is empty. Also search for in-progress tasks:
+
+```bash
+clickup task search \
+  --assignee $USER_ID \
+  --status "in progress" \
+  --status "Open" \
+  --format json
+```
 
 For each task, note: `id`, `custom_id`, `name`, `points`,
 `date_done`, and `list.name` (sprint name).
 
-Use `clickup_get_time_entries` (the workspace-wide variant, with
-`start_date`, `end_date`, and `assignee_id`) to fetch ALL existing
-entries in the date range for this user. Build an inventory of what
-already exists:
+Fetch ALL existing time entries in the date range for this user:
+
+```bash
+clickup time list \
+  --start "YYYY-MM-DD" \
+  --end "YYYY-MM-DD" \
+  --assignee $USER_ID \
+  --format json
+```
+
+Build an inventory of what already exists:
 - **Per-ticket totals**: How many hours are already logged against
   each ticket
 - **Per-day totals**: How many hours are already logged on each day
@@ -120,13 +218,13 @@ to produce.
 Parse the changelog output from Step 1 to extract:
 - Only the user's commits (filter by author name from `git config`)
 - Date and time of each commit
-- Repository name (the repo label printed by `repo.sh`)
+- Repository name (the repo label printed by `repos.sh`)
 - Ticket IDs from branch names or commit messages
   (regex: `(SW-\d+|MIS-\d+|PROJ-\d+|OPS-\d+)`)
 
 Build two maps:
-- **date → tickets**: Which tickets had commits on each day
-- **ticket → dates**: Which days each ticket was worked on
+- **date -> tickets**: Which tickets had commits on each day
+- **ticket -> dates**: Which days each ticket was worked on
 
 Treat commit dates as *evidence of activity on or near that date*.
 Commits may consolidate work from previous days, so spread hours
@@ -141,7 +239,7 @@ logged before producing new entries.
 Write a Python script that:
 
 1. **Assigns total hours per ticket** based on story points:
-   - 2 pts → 5-8h, 3 pts → 8-12h, 5 pts → 13-18h, 8 pts → 18-24h
+   - 2 pts -> 5-8h, 3 pts -> 8-12h, 5 pts -> 13-18h, 8 pts -> 18-24h
    - Scale this mapping up or down to hit the user's weekly targets
    - **Subtract existing hours**: If a ticket already has N hours
      logged, reduce the target by N. If a ticket already meets or
@@ -151,7 +249,7 @@ Write a Python script that:
    - Weekdays get the user's stated daily hours
    - Weekends only appear if the user requested it AND there were
      ticket-specific commits on that day
-   - Apply randomness (±1-2h) to avoid a robotic pattern
+   - Apply randomness (+/-1-2h) to avoid a robotic pattern
    - **Subtract existing daily hours**: If a day already has N hours
      logged, reduce that day's remaining budget by N.
    - **Account for existing ticket slots**: If a day already has K
@@ -186,57 +284,59 @@ Write a Python script that:
 **This step is mandatory. Never skip it. Never submit entries without
 explicit user approval.**
 
-Generate a spreadsheet (.xlsx) with four tabs and present it to the
-user for review:
+**Important: Display the timesheet as text output directly in the
+conversation — do NOT only print it inside a Bash tool call.** Tool
+call output may be hidden from the user. After generating the data
+(via Python/Bash), reproduce the table and summary as regular text
+in your response so the user can actually see it.
 
-- **New Entries** tab: Date, Day, Start Time, Hours, Ticket ID,
-  Ticket Name, Sprint, Duration. Color-code weekends (yellow fill)
-  and evening entries (green fill). These are the entries that WILL
-  be submitted.
-- **Existing Entries** tab: Same columns, showing entries already in
-  ClickUp. Color-code with a light gray fill so the user can see
-  what's already logged. These entries will NOT be resubmitted.
-- **Daily Summary** tab: Date, Day, Existing Hours, New Hours, Total
-  Hours, Tickets, Ticket Count. The user can see the combined picture.
-- **Weekly Summary** tab: Week range, Existing Hours, New Hours,
-  Total Hours.
+#### Entries table
 
-Use openpyxl to create the file and save it to:
+Display a markdown table with columns: Date, Day, Start, End, Hours,
+Ticket, Name, Sprint. Group rows by date with a day-total row after
+each day's entries. Mark weekend and evening entries.
 
-```
-/workspaces/trl-work/timesheet-YYYY-MM.xlsx
-```
+#### Summary
 
-(where YYYY-MM matches the target month).
+Below the table, show:
+- **Existing entries**: count and total hours already logged
+- **New entries**: count and total hours to submit
+- **Combined total**: existing + new
 
-Tell the user the file path so they can open it for review.
+#### Daily breakdown
 
-Along with the file, provide a text summary:
-- Existing entries found: count and total hours already logged
-- New entries to be submitted: count and total hours
-- Combined total: existing + new
-- Weekly hour totals (flag any week that is significantly above or
-  below the user's target)
-- Any empty weekdays (days with no entries, existing or new)
-- Any tickets that couldn't be scheduled and why
-- Any tickets that were skipped because they already had enough hours
+A short table: Date, Day, Hours, Budget.
+
+#### Per-ticket breakdown
+
+A short table: Ticket, Name, Hours, Target, Status.
+
+Flag any issues:
+- Weekly totals significantly above or below target
+- Empty weekdays with no entries
+- Tickets that couldn't be scheduled and why
+- Tickets skipped because they already had enough hours
 
 Then explicitly ask the user whether to proceed. Do not proceed until
 the user says yes. If the user requests changes (move hours, swap
-days, add/remove tickets, adjust totals), regenerate the plan, produce
-a new spreadsheet, and present again for another round of review.
+days, add/remove tickets, adjust totals), regenerate the plan and
+present again for another round of review.
 
 ### Step 6 — Submit to ClickUp (only after Step 5 approval)
 
 Only after the user has reviewed the spreadsheet and explicitly
-approved it, iterate through the entries and call
-`clickup_add_time_entry` for each one:
+approved it, iterate through the entries and submit via the CLI:
 
+```bash
+clickup time create \
+  --task-id "<task_id_or_custom_id>" \
+  --start "<unix_ms_timestamp>" \
+  --duration <milliseconds> \
+  --format json
 ```
-task_id: <task internal ID or custom ID like "SW-1234">
-start: "<YYYY-MM-DD HH:MM>"
-duration: "<N>h 0m"
-```
+
+Convert hours to milliseconds: `hours * 3600000`.
+Convert start times to Unix ms: use Python or `date +%s%3N`.
 
 Report progress as you go (e.g., "Submitted 15/63 entries..."). If
 any entry fails, log the failure details and continue with the rest.
@@ -244,10 +344,19 @@ After all entries are attempted, report successes and failures.
 
 ### Step 7 — Verify
 
-After submission, call `clickup_get_time_entries` for the date range
-to confirm all entries were created. Compare the expected count and
-total hours against what was actually submitted. Report any
-discrepancies.
+After submission, call `clickup time list` for the date range to
+confirm all entries were created:
+
+```bash
+clickup time list \
+  --start "YYYY-MM-DD" \
+  --end "YYYY-MM-DD" \
+  --assignee $USER_ID \
+  --format json
+```
+
+Compare the expected count and total hours against what was actually
+submitted. Report any discrepancies.
 
 ## Edge Cases
 

@@ -44,6 +44,7 @@ Available commands:
 | Command | Description |
 |---------|-------------|
 | `report` | Summary table of all repos (default) |
+| `sync` | Check GitHub via `gh` and pull only repos with new commits |
 | `status` | Working tree status across repos |
 | `update` | Fetch and fast-forward clean repos |
 | `fetch` | Fetch all remotes |
@@ -61,5 +62,6 @@ Workspace-level skills are in `.claude/skills/`:
 
 - `/repos` — Repository management (see Repo Tool above)
 - `/clickup-timesheet` — Generate and submit ClickUp time entries from sprint tickets and git history
-- `/missions-summary` — Update the "2026 Missions & Projects Summary" ClickUp document
-- `/daily-journal-summary` — Summarize today's work and append to the ClickUp journal
+- `/missions-summary` — Generate missions & projects summary report to `reports/`
+- `/software-milestones` — Generate SW team milestones timeline to `reports/`
+- `/daily-journal` — Summarize today's work and append to the ClickUp journal

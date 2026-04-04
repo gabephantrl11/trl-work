@@ -32,6 +32,7 @@ Run the appropriate command based on the user's request.
 
 | Command | Description |
 |---------|-------------|
+| `sync` | Check GitHub for updates via `gh` and pull only changed repos |
 | `list` | List repositories with branch and remote info |
 | `status` | Show git status summary for all repos |
 | `unpushed` | Check for unpushed commits, untracked branches, stashes |
@@ -63,3 +64,43 @@ command above.
 Present the output directly to the user. For `update` and `report`, add a
 brief summary after the output (counts of updated/skipped/failed or repos
 needing attention).
+
+### Sync command
+
+When the user says `/repos sync`, "sync repos", or "update repos from
+GitHub", use `gh` to check which repos have new commits on their current
+branch and only fetch/pull those. This avoids a slow `fetch --all` across
+every repo.
+
+```bash
+WORKSPACE_DIR="/workspaces/trl-work"
+for repo in "$WORKSPACE_DIR"/*/; do
+  [ -d "$repo/.git" ] || continue
+  name=$(basename "$repo")
+  remote=$(git -C "$repo" remote get-url origin 2>/dev/null)
+  # Extract owner/repo from git@github.com:org/repo.git or https URLs
+  gh_repo=$(echo "$remote" | sed 's|.*github.com[:/]||;s|\.git$||')
+  [ -z "$gh_repo" ] && continue
+  branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  remote_sha=$(gh api "repos/$gh_repo/branches/$branch" --jq '.commit.sha' 2>/dev/null)
+  local_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null)
+  if [ -z "$remote_sha" ]; then
+    echo "  $name: could not check (branch $branch not on GitHub?)"
+  elif [ "$remote_sha" = "$local_sha" ]; then
+    echo "  $name: up to date"
+  else
+    echo "  $name: syncing $branch..."
+    git -C "$repo" fetch origin "$branch" 2>&1
+    # Only fast-forward if local is an ancestor of remote
+    if git -C "$repo" merge-base --is-ancestor HEAD "origin/$branch" 2>/dev/null; then
+      git -C "$repo" pull --ff-only 2>&1
+      echo "  $name: updated to ${remote_sha:0:12}"
+    else
+      echo "  $name: local has diverged — skipping pull (fetch done)"
+    fi
+  fi
+done
+```
+
+After running, summarize: how many repos were checked, how many synced,
+how many already up to date, and any that diverged or failed.
