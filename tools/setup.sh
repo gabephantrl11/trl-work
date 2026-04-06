@@ -269,7 +269,7 @@ setup_clickup() {
 
     if ! command -v clickup &>/dev/null; then
         err "clickup CLI is not installed"
-        printf "     Install: ${GRAY}npm install -g @anthropic/clickup-cli${NC}\n"
+        printf "     Install: ${GRAY}https://github.com/henryreith/clickup-cli${NC}\n"
         summary_add "clickup" "missing"
         return
     fi
@@ -410,7 +410,7 @@ setup_gws() {
 
     if ! command -v gws &>/dev/null; then
         err "gws is not installed"
-        printf "     Install: ${GRAY}npm install -g google-workspace-cli${NC}\n"
+        printf "     Install: ${GRAY}npm install -g @googleworkspace/cli${NC}\n"
         summary_add "gws" "missing"
         return
     fi
@@ -447,9 +447,44 @@ setup_gws() {
         return
     fi
 
-    printf "\n     This opens a browser for Google OAuth2 sign-in.\n"
-    printf "     (Requires a GCP project with OAuth credentials.\n"
-    printf "      Run ${GRAY}gws auth setup${NC} first if you haven't configured one.)\n\n"
+    # Check if OAuth client is configured before attempting login
+    local client_secret="${HOME}/.config/gws/client_secret.json"
+    if [ ! -f "$client_secret" ] \
+        && [ -z "${GOOGLE_WORKSPACE_CLI_CLIENT_ID:-}" ] \
+        && [ -z "${GOOGLE_WORKSPACE_CLI_CLIENT_SECRET:-}" ]; then
+
+        printf "     No OAuth client configured.\n\n"
+        printf "     To set up Google Workspace CLI:\n\n"
+        printf "       ${BOLD}Option A:${NC} Run ${GRAY}gws auth setup${NC} (guided setup)\n\n"
+        printf "       ${BOLD}Option B:${NC} Download ${GREEN}client_secret.json${NC} manually:\n"
+        printf "         1. Go to ${GRAY}https://console.cloud.google.com/apis/credentials${NC}\n"
+        printf "         2. Select your project (or create one)\n"
+        printf "         3. Click ${GREEN}+ CREATE CREDENTIALS${NC} > ${GREEN}OAuth client ID${NC}\n"
+        printf "         4. Application type: ${GREEN}Desktop app${NC}\n"
+        printf "         5. Click ${GREEN}Create${NC}, then ${GREEN}DOWNLOAD JSON${NC}\n"
+        printf "         6. Save the file to:\n"
+        printf "            ${GRAY}%s${NC}\n\n" "$client_secret"
+
+        if confirm "Run ${GRAY}gws auth setup${NC} now?"; then
+            printf "\n"
+            gws auth setup || true
+            printf "\n"
+            # Re-check after setup
+            if [ ! -f "$client_secret" ] \
+                && [ -z "${GOOGLE_WORKSPACE_CLI_CLIENT_ID:-}" ] \
+                && [ -z "${GOOGLE_WORKSPACE_CLI_CLIENT_SECRET:-}" ]; then
+                err "OAuth client still not configured"
+                summary_add "gws" "fail"
+                return
+            fi
+        else
+            warn "Skipping Google Workspace CLI"
+            summary_add "gws" "skipped"
+            return
+        fi
+    fi
+
+    printf "\n     This opens a browser for Google OAuth2 sign-in.\n\n"
 
     gws auth login || true
 
@@ -464,12 +499,12 @@ setup_gws() {
     else
         local check
         check=$(gws auth status 2>&1 || true)
-        if echo "$check" | grep -qi "error\|no.*credential"; then
-            err "Authentication did not complete"
-            summary_add "gws" "fail"
-        else
+        if echo "$check" | grep -q '"token_valid": true'; then
             info "Google Workspace CLI configured"
             summary_add "gws" "ok"
+        else
+            err "Authentication did not complete"
+            summary_add "gws" "fail"
         fi
     fi
 }
@@ -481,10 +516,26 @@ setup_slack() {
     header "Slack CLI"
 
     if ! command -v slack &>/dev/null; then
-        err "slack CLI is not installed"
-        printf "     Install: ${GRAY}https://docs.slack.dev/tools/slack-cli${NC}\n"
-        summary_add "slack" "missing"
-        return
+        warn "slack CLI is not installed\n"
+
+        if confirm "Install the Slack CLI?"; then
+            printf "\n"
+            curl -fsSL https://downloads.slack-edge.com/slack-cli/install.sh | bash 2>&1 || true
+            printf "\n"
+
+            # Re-check after install
+            if ! command -v slack &>/dev/null; then
+                err "Slack CLI installation failed"
+                printf "     Install manually: ${GRAY}https://docs.slack.dev/tools/slack-cli${NC}\n"
+                summary_add "slack" "fail"
+                return
+            fi
+            info "Slack CLI installed"
+        else
+            printf "     Install manually: ${GRAY}https://docs.slack.dev/tools/slack-cli${NC}\n"
+            summary_add "slack" "skipped"
+            return
+        fi
     fi
 
     # Check current status
