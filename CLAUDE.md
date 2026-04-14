@@ -64,5 +64,7 @@ Workspace-level skills are in `.claude/skills/`:
 - `/clickup-timesheet` — Generate and submit ClickUp time entries from sprint tickets and git history
 - `/journal` — Journal management: `sync` (backup to local), `search <query>`, `read [M/D]`, `summary` (EOD write)
 - `/missions-summary` — Generate missions & projects summary report to `reports/`
+- `/project-report <name>` — Generate a comprehensive project report from Slack, ClickUp, Gmail, git to `reports/`
 - `/software-milestones` — Generate SW team milestones timeline to `reports/`
 - `/team-report` — SW team activity report (Gabe, Said, Jackson) from git, ClickUp, Drive, Slack
+- `/week-in-review` — Weekly summary journal entry grouped by product/mission from daily journal pages

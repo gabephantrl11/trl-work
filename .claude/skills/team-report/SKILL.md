@@ -3,117 +3,146 @@ name: team-report
 description: >
   Generate an SW team activity report covering git commits, ClickUp tasks,
   Google Drive edits, and Slack messages for Gabe, Said, and Jackson.
-  Outputs a markdown file to reports/. Use this skill when the user asks
-  for a team report, team summary, team activity, SW team status, or says
-  things like "what did the team do today", "team report for last week",
+  Groups work by product/mission with narrative summaries showing who did
+  what. Writes to ClickUp journal and reports/. Use this skill when the
+  user asks for a team report, team summary, team activity, SW team status,
+  or says things like "what did the team do", "team report for last week",
   "SW activity summary", or "generate team report".
 user-invokable: true
-allowed-tools: Bash, Read, Write, Agent
+allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Agent
 ---
 
 # SW Team Activity Report
 
 Gather activity signals from git, ClickUp, Google Drive, and Slack for
-the SW team (Gabe, Said, Jackson), then produce a summary report written
-to `reports/`.
-
-All ClickUp operations use the `clickup` CLI with `--format json`.
-Parse JSON with `jq` or Python.
+the SW team, then synthesize a narrative report grouped by product/mission.
 
 ## Team Members
 
-| Name | Role |
-|------|------|
-| Gabe | SW Lead |
-| Said | SW Engineer |
-| Jackson | SW Engineer |
+| Name | Role | ClickUp ID |
+|------|------|------------|
+| Gabe | SW Lead | 38406330 |
+| Said | SW Engineer | 75314186 |
+| Jackson | SW Engineer | 87301942 |
 
-ClickUp user IDs and Slack user IDs are resolved at runtime (see
-CLI Reference). Do not hardcode IDs — resolve them each time.
+## Subcommands
 
-## Date Range
+| Invocation | Action |
+|------------|--------|
+| `/team-report` | Report for the most recently ended Mon–Sun week |
+| `/team-report preview` | Same, but write locally only — ask before pushing to ClickUp |
+| `/team-report last week` | Last Mon–Sun week |
+| `/team-report 3/30-4/5` | Specific date range (M/D-M/D) |
+| `/team-report today` / `yesterday` | Single-day report |
+| `/team-report March` / `last month` | Full calendar month |
 
-Parse the caller's request to determine the date range:
+**Default behavior** (no arguments): report for the most recently
+completed Mon–Sun week. If today is Sunday, use the week ending today.
+
+Preview is the default unless the user explicitly says "publish",
+"push", or "write to ClickUp".
+
+## Date Range Parsing
 
 | Input | Range |
 |-------|-------|
-| _(none / "today")_ | Start of today through now |
+| _(none / "last week")_ | Most recently ended Mon–Sun week |
+| `this week` | Current week Mon through today |
+| `today` | Start of today through now |
 | `yesterday` | Yesterday 00:00 – 23:59 |
-| `last week` / `this week` | Monday through Friday (or Sunday) of the target week |
+| `M/D-M/D` | Exact range (current year assumed) |
 | `YYYY-MM-DD` to `YYYY-MM-DD` | Exact range |
 | `March`, `last month` | Full calendar month |
 
-If the range spans more than one day, label the report as a
-**Weekly Activity Report** or **Activity Report (date – date)**.
-A single-day range is a **Daily Activity Report**.
+Multi-day = **Weekly Team Report**. Single-day = **Daily Team Report**.
 
 ## Output
 
-```
-reports/team-report-YYYY-MM-DD.md
-```
+| Destination | Path |
+|-------------|------|
+| Preview file | `reports/team-report-preview.md` |
+| Local archive | `reports/team-report-YYYY-MM-DD.md` (end date) |
+| ClickUp journal | Journal → YYYY → MM - Mon → `Team Report (M/D-M/D)` |
 
-Use the end date of the range in the filename. Create `reports/` if it
-does not exist. Overwrite if a file for the same date already exists.
+## Key Facts (hardcoded — do not ask)
+
+| Field | Value |
+|-------|-------|
+| Journal doc ID | `kkbvf-4151` |
+| Workspace ID | `20557679` |
+| ClickUp API token | Read from `~/.config/clickup-cli-nodejs/config.json` → `profiles.default.token` |
+| Page naming | `Team Report (M/D-M/D)` or `Team Report (M/D)` for single-day |
+| Local backup dir | `reports/journal/` |
+| Index file | `reports/journal/_index.json` |
 
 ---
 
-## CLI Reference
+## Workflow
 
-### ClickUp
+### Step 1 — Determine date range
 
-```bash
-# Resolve all workspace members (get user IDs)
-clickup workspace members --format json
+Parse the user's input. Store `START_DATE`, `END_DATE`, and
+`END_DATE_PLUS_ONE`.
+
+For default/week mode:
+```python
+from datetime import date, timedelta
+
+today = date.today()
+if today.weekday() == 6:
+    sunday = today
+else:
+    sunday = today - timedelta(days=(today.weekday() + 1))
+monday = sunday - timedelta(days=6)
 ```
 
-Match members by first name (case-insensitive contains) to find each
-team member's `user.id`. If a name is ambiguous, match on full name or
-username.
+### Step 2 — Gather data
+
+Pull all four sources in parallel using separate Bash calls.
+
+#### Git
 
 ```bash
-# Tasks updated in range, assigned to a user
-# NOTE: --date-updated-gt and --date-done-gt do NOT exist in the CLI.
-# Instead, fetch tasks ordered by updated (reverse) and filter client-side
-# by comparing date_updated (Unix ms) to the start-of-range timestamp.
-START_MS=$(date -d "<start_date> 00:00:00" +%s)000
-clickup task search \
-  --assignee <user_id> \
-  --order-by updated \
-  --reverse \
-  --format json
-# Then filter: keep tasks where int(date_updated) >= START_MS
-
-# Closed tasks — same approach, filter date_done client-side
-clickup task search \
-  --assignee <user_id> \
-  --include-closed \
-  --order-by updated \
-  --reverse \
-  --format json
-# Then filter: keep tasks where int(date_done) >= START_MS
-
-# Time entries for a user in range
-clickup time list \
-  --start "<start_date>" \
-  --end "<end_date>" \
-  --assignee <user_id> \
-  --format json
+for repo in /workspaces/trl-work/*/; do
+  [ -d "$repo/.git" ] || continue
+  commits=$(git -C "$repo" log \
+    --after="<START_DATE>T00:00:00" \
+    --before="<END_DATE_PLUS_ONE>T00:00:00" \
+    --author="gabe\|Gabe\|said\|Said\|jackson\|Jackson" \
+    --format="%h|%an|%ad|%s" --date=short 2>/dev/null)
+  [ -n "$commits" ] && echo "=== $(basename "$repo") ===" && echo "$commits"
+done
 ```
 
-For each task, capture: `custom_id`, `name`, `status`, `url`
-(`https://app.clickup.com/t/<task_id>`), and `date_updated` /
-`date_done`.
-
-### Google Workspace (gws)
-
-Always append `2>/dev/null` when piping to `jq` or Python.
+#### ClickUp Tasks
 
 ```bash
-# Drive files modified in range (visible to the authenticated user)
+START_MS=$(date -d "<START_DATE> 00:00:00" +%s)000
+
+for uid in 38406330 75314186 87301942; do
+  clickup task search --assignee $uid --order-by updated --reverse --format json 2>/dev/null
+done
+```
+
+Filter client-side: keep tasks where `int(date_updated) >= START_MS`.
+For closed tasks, add `--include-closed` and filter by `date_done`.
+
+For each task capture: `custom_id`, `name`, `status`, `url`.
+
+#### ClickUp Time Entries
+
+```bash
+for uid in 38406330 75314186 87301942; do
+  clickup time list --start "<START_DATE>" --end "<END_DATE>" --assignee $uid --format json 2>/dev/null
+done
+```
+
+#### Google Drive
+
+```bash
 gws drive files list \
   --params '{
-    "q":"modifiedTime > '\''"<start_date>T00:00:00"'\'' and modifiedTime < '\''"<end_date>T23:59:59"'\''",
+    "q":"modifiedTime > '\''"<START_DATE>T00:00:00"'\'' and modifiedTime < '\''"<END_DATE>T23:59:59"'\''",
     "orderBy":"modifiedTime desc",
     "fields":"files(id,name,webViewLink,modifiedTime,mimeType,lastModifyingUser)",
     "pageSize":50
@@ -121,18 +150,13 @@ gws drive files list \
   --format json 2>/dev/null
 ```
 
-Filter results client-side by `lastModifyingUser.displayName` matching
-team member names. Capture `name`, `webViewLink`, `modifiedTime`, and
-who modified it.
+Always append `2>/dev/null` when piping `gws` output. Filter by
+`lastModifyingUser.displayName` matching team member names. If
+unavailable, skip silently.
 
-### Slack (via curl)
-
-**Token:** Use the Team Reports user token stored at
-`~/.slack/team-reports-token`. This token has `channels:history`,
-`groups:history`, and `search:read` scopes.
+#### Slack
 
 ```bash
-# Load token (prefer team-reports token, fall back to CLI token)
 SLACK_TOKEN="${SLACK_TOKEN:-$(cat "$HOME/.slack/team-reports-token" 2>/dev/null)}"
 if [ -z "$SLACK_TOKEN" ]; then
   SLACK_TOKEN=$(python3 -c "
@@ -143,269 +167,221 @@ for ws in creds.values():
     print(ws.get('token', '')); break
 " 2>/dev/null)
 fi
-```
 
-**Preferred method: `search.messages`** — searches across all channels
-at once, no per-channel scanning needed.
-
-```bash
-# Search for messages from a team member in a date range
-# Date filter format: after:YYYY-MM-DD before:YYYY-MM-DD
-curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-  --data-urlencode "query=from:<username> after:<start_date> before:<end_date_plus_one>" \
-  "https://slack.com/api/search.messages?count=100" | jq .
-```
-
-Results are in `.messages.matches[]`. Each match contains:
-- `text` — message text
-- `channel.name` — channel name
-- `permalink` — direct link to the message
-- `ts` — timestamp
-- `username` — author
-
-Run one search per team member:
-```bash
-# Search for each team member
 for user in gabe said jackson; do
   curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-    --data-urlencode "query=from:$user after:<start_date> before:<end_date_plus_one>" \
+    --data-urlencode "query=from:$user after:<START_DATE> before:<END_DATE_PLUS_ONE>" \
     "https://slack.com/api/search.messages?count=100"
 done
 ```
 
-Paginate with `&page=2`, `&page=3`, etc. if `paging.pages > 1`.
+Results in `.messages.matches[]` — capture `text`, `channel.name`,
+`permalink`. Paginate if `paging.pages > 1`. If token missing/expired,
+skip silently and note in report footer.
 
-**Fallback: `conversations.history`** — use only if `search.messages`
-fails (e.g. missing `search:read` scope).
+### Step 3 — Group by product/mission
 
-```bash
-# Read messages from a specific channel in the date range
-START_TS=$(date -d "<start_date> 00:00:00" +%s)
-END_TS=$(date -d "<end_date> 23:59:59" +%s)
-curl -s -H "Authorization: Bearer $SLACK_TOKEN" \
-  "https://slack.com/api/conversations.history?channel=<channel_id>&oldest=$START_TS&latest=$END_TS&limit=200"
-```
+Scan all gathered data and dynamically identify product/mission
+groupings. Attribute each item to a team member.
 
-If the token is missing or API calls fail, skip Slack silently and
-note it in the report footer.
+**How to detect groupings:**
+1. Map repos to products: `trl-xclops-ng` → Xclops NG,
+   `trl-commander` → Commander, `trl-saver` → SAVER,
+   `trl-viplink` → VIPLink, `trl-jetson-bsp` → BSP/Infrastructure,
+   `trl-forge` → Forge, etc.
+2. Map ClickUp tickets by prefix and name to products
+3. Look for recurring themes across git, tasks, and Slack
+4. Cluster related items under the most descriptive label
+5. Merge small groups (1-2 items) into a broader category or "Other"
+6. Order groups by volume of activity (most active first)
 
-### Git
+Common groupings (detect dynamically, don't hardcode):
+- Product names: SAVER, Xclops NG, VIPLink, VIPOnly/LUMI, Forge,
+  OrbitVision, FoveaCTL, Commander, etc.
+- Mission names: Haven-1, QC Pro, IQT, Shield Space, Starfish, etc.
+- Infrastructure: Jenkins, Gitea, BSP, devcontainer, build system
+- Meetings & coordination
+- Hardware / integration
 
-Sync repos that have remote changes, then scan for commits:
+### Step 4 — Synthesize the report
 
-```bash
-# Sync repos with remote changes first
-for repo in /workspaces/trl-work/*/; do
-  [ -d "$repo/.git" ] || continue
-  remote=$(git -C "$repo" remote get-url origin 2>/dev/null)
-  gh_repo=$(echo "$remote" | sed 's|.*github.com[:/]||;s|\.git$||')
-  branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null)
-  remote_sha=$(gh api "repos/$gh_repo/branches/$branch" --jq '.commit.sha' 2>/dev/null)
-  local_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null)
-  if [ -n "$remote_sha" ] && [ "$remote_sha" != "$local_sha" ]; then
-    git -C "$repo" fetch origin "$branch" 2>&1
-    git -C "$repo" merge-base --is-ancestor HEAD "origin/$branch" 2>/dev/null && \
-      git -C "$repo" pull --ff-only 2>&1
-  fi
-done
+Write a narrative report that:
 
-# Collect commits from all team members
-for repo in /workspaces/trl-work/*/; do
-  [ -d "$repo/.git" ] || continue
-  commits=$(git -C "$repo" log --oneline \
-    --after="<start_date>T00:00:00" \
-    --before="<end_date_plus_one>T00:00:00" \
-    --author="gabe\|Gabe\|said\|Said\|jackson\|Jackson" \
-    --format="%h|%an|%ad|%s" --date=short 2>/dev/null)
-  if [ -n "$commits" ]; then
-    echo "=== $(basename "$repo") ==="
-    echo "$commits"
-  fi
-done
-```
+- Opens with a 2-4 sentence overview of the team's week
+- Groups work into sections by product/mission (detected in Step 3)
+- Within each section, uses bullet points describing what was
+  accomplished and **who did it** (first name)
+- Mentions collaboration between team members where visible
+- Notes significant deliverables, PRs merged, milestones hit
+- Includes minor items in appropriate sections or a Misc section
+- Keeps total length to 400-1000 words (scales with activity)
+- Uses past tense, third person ("Gabe built...", "Jackson fixed...")
 
-For each commit, capture: repo name, short hash, author, date, subject.
+**Summarize, don't enumerate commits.** For example:
+- BAD: "Jackson committed `abc123`, `def456`, `ghi789` to fix files"
+- GOOD: "Jackson fixed VIP1st file cascading and added thumbnail
+  cleanup on deletion"
 
----
+**But include all notable work items.** Don't drop minor fixes or
+admin items. Group them logically.
 
-## Workflow
+**Preserve key references:**
+- ClickUp ticket links for significant items: `[SW-XXXX](url)`
+- Merge commit hashes for notable merges: `` `e56787d7` ``
+- Don't include every individual commit hash — only merges and
+  significant standalone commits
 
-### Step 1 — Determine date range
-
-Parse the user's request. Default to today. Convert relative terms
-to absolute dates. Store `START_DATE`, `END_DATE`, and
-`END_DATE_PLUS_ONE` (day after end, for git `--before`).
-
-### Step 2 — Resolve team member IDs
-
-```bash
-clickup workspace members --format json
-```
-
-Find ClickUp user IDs for Gabe, Said, and Jackson by matching on
-first name. Store as a map: `{name: clickup_user_id}`.
-
-### Step 3 — Gather activity (parallelize where possible)
-
-Collect data from all four sources for all three team members.
-Use the Agent tool to parallelize independent data gathering where
-it helps.
-
-**3a. Git commits** — Sync repos, then scan for commits by all three
-authors in the date range. Group by repo, then by author.
-
-**3b. ClickUp tasks** — For each team member:
-- Search tasks ordered by updated (reverse), filter client-side by `date_updated >= start_ms`
-- Search closed tasks (`--include-closed`), filter client-side by `date_done >= start_ms`
-- Fetch time entries in the range
-
-Deduplicate tasks that appear in both searches. For each task, note
-the member, task ID, name, status, and URL.
-
-**3c. Google Drive** — Search for files modified in the date range.
-Filter by `lastModifyingUser` matching team member names. Note: this
-only shows files visible to the authenticated Google account.
-
-**3d. Slack** — List channels, pull messages in range, filter for
-team member authors. Group by channel, note author and message
-summary.
-
-### Step 4 — Build the report
-
-Structure the report as follows:
+**Section format:**
 
 ```markdown
-# SW Team Activity Report
-_<Report type> — <date range display> | Generated: <today>_
-
-## Summary
-<2-4 sentence narrative overview of the team's main activities>
-
----
-
-## Gabe
-### Git Activity
-| Repo | Commits | Highlights |
-|------|---------|------------|
-...
-
-### ClickUp Tasks
-| Ticket | Task | Status | Action |
-|--------|------|--------|--------|
-| [SW-XXXX](url) | Task name | status | Updated / Closed / In Progress |
-...
-
-### Google Drive
-| File | Modified |
-|------|----------|
-| [Filename](webViewLink) | timestamp |
-...
-
-### Slack
-| Channel | Messages | Topics |
-|---------|----------|--------|
-| #channel | N msgs | brief topic summary |
-...
-
----
-
-## Said
-_(same structure as above)_
-
----
-
-## Jackson
-_(same structure as above)_
-
----
-
-## Cross-Team Activity
-
-### Shared Tickets
-<Tasks where multiple team members appear as assignees or had activity>
-
-### Collaboration Signals
-<Slack threads with multiple team members, shared doc edits, related commits>
-
----
-
-## Metrics
-
-| Member | Commits | Tasks Updated | Tasks Closed | Hours Logged | Drive Edits | Slack Messages |
-|--------|---------|---------------|--------------|--------------|-------------|----------------|
-| Gabe   | N       | N             | N            | N.Nh         | N           | N              |
-| Said   | N       | N             | N            | N.Nh         | N           | N              |
-| Jackson| N       | N             | N            | N.Nh         | N           | N              |
-| **Total** | **N** | **N**        | **N**        | **N.Nh**     | **N**       | **N**          |
-
----
-
-_Sources: Git (local repos), ClickUp, Google Drive, Slack_
-_<Note any sources that were unavailable>_
+## Product/Mission Name
+- What Gabe accomplished on this product
+- What Jackson worked on
+- Notable: [SW-XXXX](url), merged `hash`
 ```
 
-#### Formatting rules
+**Section order:**
+1. Main engineering sections (largest first)
+2. Infrastructure / tooling
+3. Meetings & collaboration (if notable)
+4. Hardware / integration (if applicable)
+5. Misc / admin (only if notable)
 
-- Use past tense, factual language — no editorializing
-- Every ClickUp task must include a link: `[SW-XXXX](url)`
-- Every Drive file must include a link: `[Filename](webViewLink)`
-- Git highlights: briefly describe what the commits accomplished
-  (e.g. "added gRPC reconnect logic, fixed backoff timer")
-- Slack: summarize by channel and topic, not individual messages
-  (unless there were very few)
-- No blank lines before or after headings — keep compact
-- For weekly reports, add a day-by-day breakdown under each member
-- If a member had no activity from a source, write "No activity" in
-  that section — do not omit the section
+Skip sections with no activity — don't mention their absence.
 
-### Step 5 — Write the report
+**End with a compact metrics table:**
 
-```bash
-mkdir -p /workspaces/trl-work/reports
+```markdown
+---
+| Member | Commits | Tasks | Hours | Slack |
+|--------|---------|-------|-------|-------|
 ```
 
-Write the markdown to `reports/team-report-<end_date>.md` using the
-Write tool.
+### Step 5 — Output
+
+#### Preview mode (default)
+
+Write the report to `reports/team-report-preview.md` using the Write
+tool. Display it in the conversation. Ask the user:
+
+> Ready to publish to ClickUp as "Team Report (M/D-M/D)"? (yes/no)
+
+If yes, proceed to publish. If no, ask what to change.
+
+#### Publish mode
+
+1. Find the parent month page in ClickUp for the end date.
+   Look up `_index.json` for month pages, or list pages to find the
+   correct `MM - Mon` page under the year.
+
+2. Check if a "Team Report (M/D-M/D)" page already exists:
+   - If yes, read existing content and replace it
+   - If no, create a new page
+
+3. Create or update the page:
+
+   ```bash
+   CLICKUP_TOKEN=$(python3 -c "import json; print(json.load(open('$HOME/.config/clickup-cli-nodejs/config.json'))['profiles']['default']['token'])")
+
+   curl -s -X POST \
+     "https://api.clickup.com/api/v3/workspaces/20557679/docs/kkbvf-4151/pages" \
+     -H "Authorization: $CLICKUP_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d "$(python3 -c "
+   import json
+   with open('/tmp/team-report.md') as f:
+       content = f.read()
+   print(json.dumps({
+       'name': 'Team Report (<M/D-M/D>)',
+       'parent_page_id': '<month_page_id>',
+       'content': content
+   }))
+   ")"
+
+   # Or update existing page
+   clickup doc page-update \
+     --doc-id kkbvf-4151 \
+     --page-id <page_id> \
+     --content "$(cat /tmp/team-report.md)"
+   ```
+
+4. Also save a local copy to `reports/team-report-YYYY-MM-DD.md`.
 
 ### Step 6 — Report to user
 
-After writing, display:
-- Output file path
+After publishing, display:
 - Date range covered
-- Per-member summary (1 line each): top activity and counts
-- Total metrics row
-- Any sources that were unavailable
+- Product/mission groupings found
+- Team member activity summary (commits, hours)
+- ClickUp page link (if published)
+
+---
+
+## Report Template
+
+```markdown
+# SW Team Report
+_<date range> | Generated: <today>_
+
+<2-4 sentence narrative overview of the team's main accomplishments.>
+
+## Xclops NG
+- Gabe built Ximea camera plugin with xiAPI SDK integration, including
+  GStreamer source element, unit tests, and thread safety fixes
+- Gabe added Haivision Makito decoder UI and controller service
+  ([SW-4723](url)), merged `e56787d7`
+- Jackson fixed fovea remote control page ([SW-4717](url))
+
+## Commander
+- Jackson implemented VIP1st file integration and display, with
+  thumbnail cleanup and file transfer pagination fixes
+- Jackson worked on dashboard improvements ([SW-4693](url)) and
+  snapshot retry logic
+
+## SAVER
+- Gabe streamlined SDK release package and updated PR template
+  to use `make verify` ([SW-4722](url))
+
+## BSP / Infrastructure
+- Gabe upgraded VimbaX SDK to 2026-1 across Jetson BSP and Xclops
+- Gabe added Software Activation (SWA) package and zstd mass flash
+
+## Hardware / Integration
+- Said completed Naden Class 2 unit build support ([MIS-2311](url))
+  and GSE flashing setup ([EE-647](url))
+
+---
+| Member | Commits | Tasks Updated | Hours Logged |
+|--------|---------|---------------|--------------|
+| Gabe | 104 | 12 | 20.0 |
+| Said | 0 | 12 | 0.0 |
+| Jackson | 28 | 11 | 34.5 |
+
+_Sources: Git, ClickUp, Google Drive, Slack_
+```
 
 ---
 
 ## Edge Cases
 
-**No activity for a team member**: Keep their section but note
-"No activity found in the reporting period" under each source.
+- **No activity for a member**: Don't create a section for them —
+  mention in overview if notable
+- **No Slack token / expired**: Skip Slack, note in footer
+- **Drive unavailable**: Skip Drive, note in footer
+- **> 14 days**: Warn about Slack/Drive pagination limits
+- **Existing file/page**: Overwrite without asking
+- **Single-day report**: Use `Team Report (M/D)` page name
 
-**ClickUp member not found**: If a team member's name doesn't match
-any workspace member, note it in the report footer and skip their
-ClickUp data. Still gather git and other sources.
+---
 
-**No Slack token**: Skip Slack entirely. Note in the report footer:
-"Slack data unavailable (no token)."
+## Tone & Style
 
-**Google API unavailable**: Skip Drive. Note in footer.
-
-**Weekly reports**: For multi-day ranges, add a day-by-day commit
-count table at the top of each member's Git Activity section:
-
-```markdown
-| Date | Commits |
-|------|---------|
-| Mon 3/31 | 5 |
-| Tue 4/1  | 3 |
-| ...      |   |
-```
-
-**Large date ranges (> 14 days)**: Warn the user that the report
-may take a while and that Slack/Drive data may be incomplete due to
-API pagination limits. Paginate ClickUp task searches fully.
-
-**Existing report file**: Overwrite without asking — this is a
-regenerated report.
+- Match the journal's informal, technical shorthand
+- Factual and concise — no editorializing
+- Bullet points > paragraphs; prose only for the opening overview
+- No blank lines before or after headings (compact formatting)
+- First names only for colleagues
+- Higher-level than raw data — focus on outcomes and narrative,
+  not commit-by-commit enumeration
+- Attribute work to team members within product sections
+  ("Gabe built...", "Jackson fixed...")
